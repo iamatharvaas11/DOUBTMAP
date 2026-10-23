@@ -132,3 +132,4 @@ export function AssessmentPanel({ assessment, conflicts }: AssessmentPanelProps)
     </div>
   );
 }
+

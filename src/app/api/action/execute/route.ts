@@ -47,3 +47,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(safeErr, { status: 500 });
   }
 }
+

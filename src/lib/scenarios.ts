@@ -543,3 +543,4 @@ export const SEEDED_SCENARIOS = {
   service: SCENARIO_SERVICE,
   flooding: SCENARIO_FLOODING,
 };
+

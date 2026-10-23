@@ -107,3 +107,4 @@ export function KPIStrip({ incident }: KPIStripProps) {
     </div>
   );
 }
+

@@ -259,3 +259,4 @@ export function EvidenceGraph({ incident, onSelectAction }: EvidenceGraphProps) 
     </div>
   );
 }
+

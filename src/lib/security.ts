@@ -111,3 +111,4 @@ export function formatSafeError(error: unknown): { error: string; code: string }
     code: 'PROCESSING_ERROR',
   };
 }
+

@@ -124,3 +124,4 @@ export interface Incident {
   assessment: Assessment;
   auditTrail: AuditEntry[];
 }
+

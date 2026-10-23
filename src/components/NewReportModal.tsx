@@ -157,3 +157,4 @@ export function NewReportModal({ isOpen, onClose, onSubmit }: NewReportModalProp
     </div>
   );
 }
+
