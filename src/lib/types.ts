@@ -95,6 +95,7 @@ export interface Assessment {
   unresolvedQuestions: string[];
   recommendedNextStep: string;
   lastCalculatedAt: string;
+  analysisLatencyMs?: number;  // Measured execution time in milliseconds
 }
 
 export interface AuditEntry {
@@ -107,6 +108,7 @@ export interface AuditEntry {
     conflictsResolved: number;
     newClaimsAdded: number;
     confidenceShift: number;
+    executionLatencyMs?: number;
   };
 }
 

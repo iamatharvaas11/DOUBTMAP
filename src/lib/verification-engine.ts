@@ -248,6 +248,7 @@ export function calculateAssessment(
   conflicts: Conflict[],
   reports: RawReport[]
 ): Assessment {
+  const startTime = performance.now();
   let activeConflictCount = 0;
   let criticalConflictCount = 0;
   const activeConflicts: Conflict[] = [];
@@ -332,6 +333,7 @@ export function calculateAssessment(
     unresolvedQuestions: unresolvedQuestions.length > 0 ? unresolvedQuestions : ['All initial contradictions reconciled.'],
     recommendedNextStep,
     lastCalculatedAt: new Date().toISOString(),
+    analysisLatencyMs: Number((performance.now() - startTime).toFixed(2)),
   };
 }
 
@@ -341,6 +343,7 @@ export function applyVerificationEvidence(
   newReport: RawReport,
   expectedResolutionText?: string
 ): { updatedIncident: Incident; auditEntry: AuditEntry } {
+  const startTime = performance.now();
   const previousConfidence = incident.assessment.confidenceScore;
   const previousActiveConflictCount = incident.conflicts.filter(c => c.status === 'active').length;
 
@@ -484,6 +487,7 @@ export function applyVerificationEvidence(
       conflictsResolved: resolvedCount,
       newClaimsAdded: 1,
       confidenceShift: confidenceDelta,
+      executionLatencyMs: Number((performance.now() - startTime).toFixed(2)),
     },
   };
 

@@ -25,7 +25,8 @@ export default function DoubtMapPage() {
   const [incident, setIncident] = useState<Incident>(() => getScenarioClone('bridge'));
   const [isExecuting, setIsExecuting] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [engineUsed] = useState<string>('Deterministic Rules (Optimized Path)');
+  const [isAiActive, setIsAiActive] = useState<boolean>(false);
+  const [engineUsed, setEngineUsed] = useState<string>('Deterministic Rules (Auto-Fallback)');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -58,66 +59,122 @@ export default function DoubtMapPage() {
     }
   }, [selectedDomain, showToast]);
 
-  // Execute verification action
+  // Execute verification action through server API with resilient offline fallback
   const handleExecuteAction = useCallback(async (action: VerificationAction) => {
     setIsExecuting(true);
     try {
-      // Bounded minimal latency for UX responsiveness
-      await new Promise(resolve => setTimeout(resolve, 300));
+      let updated: Incident | null = null;
 
-      setIncident(prev => {
-        const { updatedIncident } = applyVerificationEvidence(
-          prev,
+      try {
+        const res = await fetch('/api/action/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            incident,
+            simulatedReport: action.simulationPayload.simulatedReport,
+            expectedResolution: action.simulationPayload.expectedResolution,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.updatedIncident) {
+            updated = data.updatedIncident;
+          }
+        }
+      } catch {
+        // Fallback to client-side engine if server unreachable
+      }
+
+      if (!updated) {
+        const res = applyVerificationEvidence(
+          incident,
           action.simulationPayload.simulatedReport,
           action.simulationPayload.expectedResolution
         );
-        return updatedIncident;
-      });
+        updated = res.updatedIncident;
+      }
+
+      setIncident(updated);
       showToast(`Verification completed: ${action.title} executed.`);
     } catch (err) {
       console.error('Execution error:', err);
     } finally {
       setIsExecuting(false);
     }
-  }, [showToast]);
+  }, [incident, showToast]);
 
-  // Handle ingestion of new user-submitted report
+  // Ingest new evidence through server verification pipeline with live latency measurement
   const handleAddReport = useCallback(async (report: RawReport) => {
-    const extraction = extractClaimsDeterministically(report);
+    try {
+      let extractedClaims = null;
+      let latency = 0;
 
-    setIncident(prev => {
-      const newClaims = [...prev.claims, ...extraction.claims];
-      const newReports = [...prev.reports, report];
-      const updatedConflicts = detectConflicts(newClaims, report.timestamp);
-      const updatedAssessment = calculateAssessment(newClaims, updatedConflicts, newReports);
-      const updatedQueue = rankVerificationActions(prev.verificationQueue, updatedConflicts);
+      try {
+        const res = await fetch('/api/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            report,
+            existingClaims: incident.claims,
+            existingReports: incident.reports,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          extractedClaims = data.extractedClaims;
+          latency = data.extractionMetadata?.latencyMs ?? 0;
+          setIsAiActive(!data.extractionMetadata?.isFallback);
+          setEngineUsed(data.extractionMetadata?.engine ?? 'gemini-1.5-flash');
+        }
+      } catch {
+        // Fallback gracefully
+      }
 
-      const auditEntry = {
-        id: `audit-add-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        action: 'EXTERNAL_EVIDENCE_INGESTED',
-        actor: 'user' as const,
-        details: `User submitted new report from ${report.source} [${report.sourceType}]. Extracted ${extraction.claims.length} claim(s). Active conflicts now: ${updatedConflicts.filter(c => c.status === 'active').length}.`,
-        stateDelta: {
-          conflictsResolved: 0,
-          newClaimsAdded: extraction.claims.length,
-          confidenceShift: updatedAssessment.confidenceScore - prev.assessment.confidenceScore,
-        },
-      };
+      if (!extractedClaims) {
+        const fallback = extractClaimsDeterministically(report);
+        extractedClaims = fallback.claims;
+        latency = fallback.latencyMs;
+        setIsAiActive(false);
+        setEngineUsed('deterministic-fallback');
+      }
 
-      return {
-        ...prev,
-        reports: newReports,
-        claims: newClaims,
-        conflicts: updatedConflicts,
-        assessment: updatedAssessment,
-        verificationQueue: updatedQueue,
-        auditTrail: [auditEntry, ...prev.auditTrail],
-      };
-    });
+      setIncident(prev => {
+        const newClaims = [...prev.claims, ...extractedClaims];
+        const newReports = [...prev.reports, report];
+        const updatedConflicts = detectConflicts(newClaims, report.timestamp);
+        const updatedAssessment = calculateAssessment(newClaims, updatedConflicts, newReports);
+        const updatedQueue = rankVerificationActions(prev.verificationQueue, updatedConflicts);
 
-    showToast(`New evidence from "${report.source}" ingested & evaluated.`);
-  }, [showToast]);
+        const auditEntry = {
+          id: `audit-add-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          action: 'EXTERNAL_EVIDENCE_INGESTED',
+          actor: 'user' as const,
+          details: `User submitted report from ${report.source} [${report.sourceType}]. Processed in ${latency}ms. Extracted ${extractedClaims.length} claim(s). Active conflicts: ${updatedConflicts.filter(c => c.status === 'active').length}.`,
+          stateDelta: {
+            conflictsResolved: 0,
+            newClaimsAdded: extractedClaims.length,
+            confidenceShift: updatedAssessment.confidenceScore - prev.assessment.confidenceScore,
+            executionLatencyMs: latency,
+          },
+        };
+
+        return {
+          ...prev,
+          reports: newReports,
+          claims: newClaims,
+          conflicts: updatedConflicts,
+          assessment: updatedAssessment,
+          verificationQueue: updatedQueue,
+          auditTrail: [auditEntry, ...prev.auditTrail],
+        };
+      });
+
+      showToast(`Evidence from "${report.source}" processed in ${latency}ms.`);
+    } catch (err) {
+      console.error('Add report error:', err);
+    }
+  }, [incident.claims, incident.reports, showToast]);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
@@ -126,7 +183,7 @@ export default function DoubtMapPage() {
         selectedDomain={selectedDomain}
         onSelectDomain={handleSelectDomain}
         onOpenNewEvidence={() => setIsModalOpen(true)}
-        isAiActive={false}
+        isAiActive={isAiActive}
         engineUsed={engineUsed}
       />
 

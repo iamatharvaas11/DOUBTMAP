@@ -135,6 +135,7 @@ export const AssessmentSchema = z.object({
   unresolvedQuestions: z.array(z.string()),
   recommendedNextStep: z.string(),
   lastCalculatedAt: z.string(),
+  analysisLatencyMs: z.number().optional(),
 });
 
 export const AuditEntrySchema = z.object({
@@ -147,6 +148,7 @@ export const AuditEntrySchema = z.object({
     conflictsResolved: z.number(),
     newClaimsAdded: z.number(),
     confidenceShift: z.number(),
+    executionLatencyMs: z.number().optional(),
   }),
 });
 

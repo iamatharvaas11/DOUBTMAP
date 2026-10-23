@@ -220,7 +220,14 @@ describe('DOUBTMAP Automated Evidence Verification Engine Tests', () => {
           costDelayFactor: 85,
         },
         simulationPayload: {
-          simulatedReport: {} as any,
+          simulatedReport: {
+            id: 'rep-sim-drone',
+            source: 'Field Drone',
+            sourceType: 'sensor',
+            timestamp: '2026-10-23T10:35:00Z',
+            content: 'Crack measured at 14mm.',
+            reliabilityScore: 0.95,
+          },
           expectedResolution: 'Drone confirmed crack.',
         },
       },
@@ -240,7 +247,14 @@ describe('DOUBTMAP Automated Evidence Verification Engine Tests', () => {
           costDelayFactor: 20,
         },
         simulationPayload: {
-          simulatedReport: {} as any,
+          simulatedReport: {
+            id: 'rep-sim-crew',
+            source: 'Sign Inspector',
+            sourceType: 'field_operator',
+            timestamp: '2026-10-23T10:35:00Z',
+            content: 'Sign is readable.',
+            reliabilityScore: 0.85,
+          },
           expectedResolution: 'Sign readable.',
         },
       },
@@ -321,6 +335,64 @@ describe('DOUBTMAP Automated Evidence Verification Engine Tests', () => {
       expect(scenario.assessment.confidenceScore).toBeLessThanOrEqual(98);
       expect(scenario.auditTrail.length).toBeGreaterThanOrEqual(1);
     }
+  });
+
+  // 12. Execution Latency Measurement Verification
+  it('should accurately measure and return analysisLatencyMs and executionLatencyMs', () => {
+    const incident: Incident = JSON.parse(JSON.stringify(SCENARIO_BRIDGE));
+    const assessment = calculateAssessment(incident.claims, incident.conflicts, incident.reports);
+
+    expect(typeof assessment.analysisLatencyMs).toBe('number');
+    expect(assessment.analysisLatencyMs).toBeGreaterThanOrEqual(0);
+
+    const report: RawReport = {
+      id: 'rep-perf-test',
+      source: 'Sensor Alpha',
+      sourceType: 'sensor',
+      timestamp: '2026-10-23T10:40:00Z',
+      content: 'Span 3 joint displacement confirmed.',
+      reliabilityScore: 0.95,
+    };
+
+    const { auditEntry } = applyVerificationEvidence(incident, report);
+    expect(typeof auditEntry.stateDelta.executionLatencyMs).toBe('number');
+    expect(auditEntry.stateDelta.executionLatencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  // 13. API Route Handler Validation & Integration Verification
+  it('should reject invalid API payloads with status 400 and validate correct payloads', async () => {
+    const { POST: executePost } = await import('../src/app/api/action/execute/route');
+
+    // Missing required fields
+    const invalidReq = new Request('http://localhost:3000/api/action/execute', {
+      method: 'POST',
+      body: JSON.stringify({ invalid: true }),
+    });
+
+    const res = await executePost(invalidReq as any);
+    expect(res.status).toBe(400);
+
+    const validReq = new Request('http://localhost:3000/api/action/execute', {
+      method: 'POST',
+      body: JSON.stringify({
+        incident: SCENARIO_BRIDGE,
+        simulatedReport: {
+          id: 'rep-sim-api',
+          source: 'API Test Sensor',
+          sourceType: 'sensor',
+          timestamp: '2026-10-23T10:45:00Z',
+          content: 'API displacement verified.',
+          reliabilityScore: 0.95,
+        },
+        expectedResolution: 'API verification resolved.',
+      }),
+    });
+
+    const successRes = await executePost(validReq as any);
+    expect(successRes.status).toBe(200);
+    const successData = await successRes.json();
+    expect(successData.success).toBe(true);
+    expect(successData.updatedIncident).toBeDefined();
   });
 
 });
