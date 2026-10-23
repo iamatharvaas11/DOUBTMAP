@@ -122,8 +122,8 @@ $$\text{PriorityScore} = (\text{Importance} \times 0.25) + (\text{ConflictSeveri
 ### Quickstart
 ```bash
 # Clone the repository
-git clone https://github.com/iamatharvaas11/DOUBTMAP.git
-cd DOUBTMAP
+git clone https://github.com/atharvasharma-cloud/new.git
+cd new
 
 # Install dependencies
 npm install
