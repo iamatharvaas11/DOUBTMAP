@@ -122,8 +122,8 @@ $$\text{PriorityScore} = (\text{Importance} \times 0.25) + (\text{ConflictSeveri
 ### Quickstart
 ```bash
 # Clone the repository
-git clone https://github.com/atharvapramodsharma-oss/doubtmap.git
-cd doubtmap
+git clone https://github.com/iamatharvaas11/DOUBTMAP.git
+cd DOUBTMAP
 
 # Install dependencies
 npm install
@@ -143,7 +143,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## 8. Automated Test Outcomes
 
-Automated tests cover all required criteria:
+Automated tests cover all required criteria (13 of 13 tests passed):
 - `Contradictory claims detection`: **PASSED**
 - `Stale evidence categorization`: **PASSED**
 - `Duplicate report deduplication`: **PASSED**
@@ -155,6 +155,8 @@ Automated tests cover all required criteria:
 - `Evidence updates that resolve conflict`: **PASSED**
 - `Evidence updates that leave conflict unresolved`: **PASSED**
 - `3-domain synthetic benchmark evaluation`: **PASSED**
+- `Execution latency measurement & profiling`: **PASSED**
+- `API route handler validation & integration`: **PASSED**
 
 ---
 
