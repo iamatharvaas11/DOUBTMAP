@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Incident, VerificationAction, RawReport } from '@/lib/types';
-import { SEEDED_SCENARIOS, SCENARIO_BRIDGE, SCENARIO_SERVICE, SCENARIO_FLOODING } from '@/lib/scenarios';
+import { SCENARIO_BRIDGE, SCENARIO_SERVICE, SCENARIO_FLOODING } from '@/lib/scenarios';
 import { applyVerificationEvidence, detectConflicts, rankVerificationActions, calculateAssessment } from '@/lib/verification-engine';
 import { extractClaimsDeterministically } from '@/lib/gemini';
 import { Header } from '@/components/Header';
@@ -15,101 +15,109 @@ import { AuditTrail } from '@/components/AuditTrail';
 import { NewReportModal } from '@/components/NewReportModal';
 import { ShieldAlert, RefreshCw, Sparkles, CheckCircle2 } from 'lucide-react';
 
+const getScenarioClone = (domain: 'bridge' | 'service' | 'flooding'): Incident => {
+  const template = domain === 'bridge' ? SCENARIO_BRIDGE : domain === 'service' ? SCENARIO_SERVICE : SCENARIO_FLOODING;
+  return structuredClone ? structuredClone(template) : JSON.parse(JSON.stringify(template));
+};
+
 export default function DoubtMapPage() {
   const [selectedDomain, setSelectedDomain] = useState<'bridge' | 'service' | 'flooding' | 'custom'>('bridge');
-  const [incident, setIncident] = useState<Incident>(SCENARIO_BRIDGE);
+  const [incident, setIncident] = useState<Incident>(() => getScenarioClone('bridge'));
   const [isExecuting, setIsExecuting] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [engineUsed, setEngineUsed] = useState<string>('Deterministic Engine (Demo Mode)');
+  const [engineUsed] = useState<string>('Deterministic Rules (Optimized Path)');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastMessage(msg);
+    toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 3500);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    };
+  }, []);
 
   // Switch scenario
-  const handleSelectDomain = (domain: 'bridge' | 'service' | 'flooding' | 'custom') => {
+  const handleSelectDomain = useCallback((domain: 'bridge' | 'service' | 'flooding' | 'custom') => {
     setSelectedDomain(domain);
-    if (domain === 'bridge') {
-      setIncident(JSON.parse(JSON.stringify(SCENARIO_BRIDGE)));
-    } else if (domain === 'service') {
-      setIncident(JSON.parse(JSON.stringify(SCENARIO_SERVICE)));
-    } else if (domain === 'flooding') {
-      setIncident(JSON.parse(JSON.stringify(SCENARIO_FLOODING)));
+    if (domain !== 'custom') {
+      setIncident(getScenarioClone(domain));
     }
     showToast(`Switched scenario to: ${domain.toUpperCase()}`);
-  };
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 4000);
-  };
+  }, [showToast]);
 
   // Reset current scenario to initial state
-  const handleResetScenario = () => {
-    handleSelectDomain(selectedDomain);
-  };
+  const handleResetScenario = useCallback(() => {
+    if (selectedDomain !== 'custom') {
+      setIncident(getScenarioClone(selectedDomain));
+      showToast(`Reset scenario: ${selectedDomain.toUpperCase()}`);
+    }
+  }, [selectedDomain, showToast]);
 
   // Execute verification action
-  const handleExecuteAction = async (action: VerificationAction) => {
+  const handleExecuteAction = useCallback(async (action: VerificationAction) => {
     setIsExecuting(true);
     try {
-      // Simulate network / telemetry delay for realism
-      await new Promise(resolve => setTimeout(resolve, 600));
+      // Bounded minimal latency for UX responsiveness
+      await new Promise(resolve => setTimeout(resolve, 300));
 
-      const { updatedIncident, auditEntry } = applyVerificationEvidence(
-        incident,
-        action.simulationPayload.simulatedReport,
-        action.simulationPayload.expectedResolution
-      );
-
-      setIncident(updatedIncident);
-      showToast(`Verification completed: ${action.title} executed. Conflict reconciled!`);
+      setIncident(prev => {
+        const { updatedIncident } = applyVerificationEvidence(
+          prev,
+          action.simulationPayload.simulatedReport,
+          action.simulationPayload.expectedResolution
+        );
+        return updatedIncident;
+      });
+      showToast(`Verification completed: ${action.title} executed.`);
     } catch (err) {
       console.error('Execution error:', err);
     } finally {
       setIsExecuting(false);
     }
-  };
+  }, [showToast]);
 
   // Handle ingestion of new user-submitted report
-  const handleAddReport = async (report: RawReport) => {
-    // 1. Extract claims using deterministic rules or server API
+  const handleAddReport = useCallback(async (report: RawReport) => {
     const extraction = extractClaimsDeterministically(report);
-    const newClaims = [...incident.claims, ...extraction.claims];
-    const newReports = [...incident.reports, report];
 
-    // 2. Re-detect conflicts
-    const updatedConflicts = detectConflicts(newClaims, report.timestamp);
+    setIncident(prev => {
+      const newClaims = [...prev.claims, ...extraction.claims];
+      const newReports = [...prev.reports, report];
+      const updatedConflicts = detectConflicts(newClaims, report.timestamp);
+      const updatedAssessment = calculateAssessment(newClaims, updatedConflicts, newReports);
+      const updatedQueue = rankVerificationActions(prev.verificationQueue, updatedConflicts);
 
-    // 3. Re-calculate assessment
-    const updatedAssessment = calculateAssessment(newClaims, updatedConflicts, newReports);
+      const auditEntry = {
+        id: `audit-add-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        action: 'EXTERNAL_EVIDENCE_INGESTED',
+        actor: 'user' as const,
+        details: `User submitted new report from ${report.source} [${report.sourceType}]. Extracted ${extraction.claims.length} claim(s). Active conflicts now: ${updatedConflicts.filter(c => c.status === 'active').length}.`,
+        stateDelta: {
+          conflictsResolved: 0,
+          newClaimsAdded: extraction.claims.length,
+          confidenceShift: updatedAssessment.confidenceScore - prev.assessment.confidenceScore,
+        },
+      };
 
-    // 4. Re-rank verification queue
-    const updatedQueue = rankVerificationActions(incident.verificationQueue, updatedConflicts);
-
-    // 5. Append audit entry
-    const auditEntry = {
-      id: `audit-add-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      action: 'EXTERNAL_EVIDENCE_INGESTED',
-      actor: 'user' as const,
-      details: `User submitted new report from ${report.source} [${report.sourceType}]. Extracted ${extraction.claims.length} claim(s). Active conflicts now: ${updatedConflicts.filter(c => c.status === 'active').length}.`,
-      stateDelta: {
-        conflictsResolved: 0,
-        newClaimsAdded: extraction.claims.length,
-        confidenceShift: updatedAssessment.confidenceScore - incident.assessment.confidenceScore,
-      },
-    };
-
-    setIncident({
-      ...incident,
-      reports: newReports,
-      claims: newClaims,
-      conflicts: updatedConflicts,
-      assessment: updatedAssessment,
-      verificationQueue: updatedQueue,
-      auditTrail: [auditEntry, ...incident.auditTrail],
+      return {
+        ...prev,
+        reports: newReports,
+        claims: newClaims,
+        conflicts: updatedConflicts,
+        assessment: updatedAssessment,
+        verificationQueue: updatedQueue,
+        auditTrail: [auditEntry, ...prev.auditTrail],
+      };
     });
 
     showToast(`New evidence from "${report.source}" ingested & evaluated.`);
-  };
+  }, [showToast]);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">

@@ -9,7 +9,7 @@ interface EvidenceGraphProps {
   onSelectAction?: (action: VerificationAction) => void;
 }
 
-export function EvidenceGraph({ incident, onSelectAction }: EvidenceGraphProps) {
+function EvidenceGraphComponent({ incident, onSelectAction }: EvidenceGraphProps) {
   const [selectedConflictId, setSelectedConflictId] = useState<string | null>(null);
 
   const activeConflicts = incident.conflicts.filter(c => c.status === 'active');
@@ -259,4 +259,6 @@ export function EvidenceGraph({ incident, onSelectAction }: EvidenceGraphProps) 
     </div>
   );
 }
+
+export const EvidenceGraph = React.memo(EvidenceGraphComponent);
 

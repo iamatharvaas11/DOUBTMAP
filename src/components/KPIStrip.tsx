@@ -8,7 +8,7 @@ interface KPIStripProps {
   incident: Incident;
 }
 
-export function KPIStrip({ incident }: KPIStripProps) {
+function KPIStripComponent({ incident }: KPIStripProps) {
   const activeConflicts = incident.conflicts.filter(c => c.status === 'active');
   const criticalConflicts = activeConflicts.filter(c => c.severity === 'critical');
   const resolvedConflicts = incident.conflicts.filter(c => c.status === 'resolved');
@@ -107,4 +107,6 @@ export function KPIStrip({ incident }: KPIStripProps) {
     </div>
   );
 }
+
+export const KPIStrip = React.memo(KPIStripComponent);
 

@@ -50,68 +50,83 @@ export function calculateFreshnessMinutes(timestamp: string, referenceTime?: str
   }
 }
 
-// Deterministic conflict detector
+// Deterministic conflict detector with O(N) pre-normalization and bounded processing
 export function detectConflicts(claims: Claim[], referenceTime?: string): Conflict[] {
   const conflicts: Conflict[] = [];
   const processedPairs = new Set<string>();
 
-  for (let i = 0; i < claims.length; i++) {
-    for (let j = i + 1; j < claims.length; j++) {
-      const a = claims[i];
-      const b = claims[j];
+  // Bound processing to protect against combinatorial explosion
+  const boundedClaims = claims.slice(0, 60);
 
-      // Ignore already resolved or superseded claims
-      if (a.status === 'resolved' || b.status === 'resolved' || a.supersededBy || b.supersededBy) {
-        continue;
-      }
+  // Precompute normalized properties & freshness in O(N) instead of O(N^2)
+  const normalized = boundedClaims.map(c => ({
+    claim: c,
+    subLower: c.subject.toLowerCase().trim(),
+    propLower: c.property.toLowerCase().trim(),
+    valLower: c.value.toLowerCase().trim(),
+    freshness: calculateFreshnessMinutes(c.timestamp, referenceTime),
+    numVal: parseFloat(c.value.replace(/[^0-9.]/g, '')),
+  }));
 
-      const pairKey = [a.id, b.id].sort().join('::');
+  for (let i = 0; i < normalized.length; i++) {
+    const itemA = normalized[i];
+    const a = itemA.claim;
+
+    // Ignore already resolved or superseded claims
+    if (a.status === 'resolved' || a.supersededBy) continue;
+
+    for (let j = i + 1; j < normalized.length; j++) {
+      const itemB = normalized[j];
+      const b = itemB.claim;
+
+      if (b.status === 'resolved' || b.supersededBy) continue;
+
+      const pairKey = a.id < b.id ? `${a.id}::${b.id}` : `${b.id}::${a.id}`;
       if (processedPairs.has(pairKey)) continue;
       processedPairs.add(pairKey);
 
-      // Match subject & property overlap
-      const subjectMatch = a.subject.toLowerCase().trim() === b.subject.toLowerCase().trim() ||
-        a.subject.toLowerCase().includes(b.subject.toLowerCase()) ||
-        b.subject.toLowerCase().includes(a.subject.toLowerCase());
+      // Fast pre-normalized subject & property match
+      const subjectMatch = itemA.subLower === itemB.subLower ||
+        itemA.subLower.includes(itemB.subLower) ||
+        itemB.subLower.includes(itemA.subLower);
 
-      const propertyMatch = a.property.toLowerCase().trim() === b.property.toLowerCase().trim() ||
-        a.property.toLowerCase().includes(b.property.toLowerCase()) ||
-        b.property.toLowerCase().includes(a.property.toLowerCase());
+      if (!subjectMatch) continue;
 
-      if (subjectMatch && propertyMatch) {
-        const valA = a.value.toLowerCase().trim();
-        const valB = b.value.toLowerCase().trim();
+      const propertyMatch = itemA.propLower === itemB.propLower ||
+        itemA.propLower.includes(itemB.propLower) ||
+        itemB.propLower.includes(itemA.propLower);
+
+      if (propertyMatch) {
+        const valA = itemA.valLower;
+        const valB = itemB.valLower;
 
         // Check explicit polarity negation or opposing values
         let isOpposing = false;
-        if (a.polarity !== b.polarity && (a.polarity === 'asserted' && b.polarity === 'denied' || a.polarity === 'denied' && b.polarity === 'asserted')) {
+        if (a.polarity !== b.polarity && ((a.polarity === 'asserted' && b.polarity === 'denied') || (a.polarity === 'denied' && b.polarity === 'asserted'))) {
           isOpposing = true;
         }
 
-        for (const [v1, v2] of OPPOSING_VALUES) {
-          if ((valA.includes(v1) && valB.includes(v2)) || (valA.includes(v2) && valB.includes(v1))) {
-            isOpposing = true;
-            break;
+        if (!isOpposing) {
+          for (const [v1, v2] of OPPOSING_VALUES) {
+            if ((valA.includes(v1) && valB.includes(v2)) || (valA.includes(v2) && valB.includes(v1))) {
+              isOpposing = true;
+              break;
+            }
           }
         }
 
-        // Check numerical discrepancy (e.g. 4 inches vs 36 inches)
-        const numA = parseFloat(valA.replace(/[^0-9.]/g, ''));
-        const numB = parseFloat(valB.replace(/[^0-9.]/g, ''));
-        if (!isNaN(numA) && !isNaN(numB) && Math.abs(numA - numB) > 2) {
-          // Significant numerical discrepancy
+        // Fast precomputed numerical discrepancy
+        if (!isOpposing && !isNaN(itemA.numVal) && !isNaN(itemB.numVal) && Math.abs(itemA.numVal - itemB.numVal) > 2) {
           isOpposing = true;
         }
 
-        // Check if values are plain different strings for exclusive properties
-        if (!isOpposing && valA !== valB && (a.property.includes('status') || a.property.includes('cause') || a.property.includes('component'))) {
+        // Check exclusive properties
+        if (!isOpposing && valA !== valB && (itemA.propLower.includes('status') || itemA.propLower.includes('cause') || itemA.propLower.includes('component'))) {
           isOpposing = true;
         }
 
         if (isOpposing) {
-          const freshA = calculateFreshnessMinutes(a.timestamp, referenceTime);
-          const freshB = calculateFreshnessMinutes(b.timestamp, referenceTime);
-          const freshnessGap = Math.abs(freshA - freshB);
+          const freshnessGap = Math.abs(itemA.freshness - itemB.freshness);
 
           let severity: ConflictSeverity = 'medium';
           let conflictType: Conflict['type'] = 'direct_contradiction';
@@ -121,11 +136,11 @@ export function detectConflicts(claims: Claim[], referenceTime?: string): Confli
             severity = 'high';
           }
 
-          if (a.sourceType === 'official' && b.sourceType === 'crowdsource' || b.sourceType === 'official' && a.sourceType === 'crowdsource') {
+          if ((a.sourceType === 'official' && b.sourceType === 'crowdsource') || (b.sourceType === 'official' && a.sourceType === 'crowdsource')) {
             severity = 'critical';
           } else if (a.sourceType === 'sensor' && b.sourceType === 'sensor') {
             severity = 'high';
-          } else if (a.value.includes('crack') || b.value.includes('crack') || a.value.includes('submerged') || b.value.includes('submerged')) {
+          } else if (valA.includes('crack') || valB.includes('crack') || valA.includes('submerged') || valB.includes('submerged')) {
             severity = 'critical';
           }
 
@@ -227,37 +242,64 @@ export function rankVerificationActions(
   }).sort((a, b) => b.priorityScore - a.priorityScore);
 }
 
-// Compute comprehensive incident assessment
+// Compute comprehensive incident assessment in a single pass O(N)
 export function calculateAssessment(
   claims: Claim[],
   conflicts: Conflict[],
   reports: RawReport[]
 ): Assessment {
-  const activeConflicts = conflicts.filter(c => c.status === 'active');
-  const resolvedClaims = claims.filter(c => c.status === 'resolved' || c.status === 'supported');
-  const criticalConflicts = activeConflicts.filter(c => c.severity === 'critical' || c.severity === 'high');
+  let activeConflictCount = 0;
+  let criticalConflictCount = 0;
+  const activeConflicts: Conflict[] = [];
+  const supportedFacts: string[] = [];
+
+  for (let i = 0; i < conflicts.length; i++) {
+    const c = conflicts[i];
+    if (c.status === 'active') {
+      activeConflictCount++;
+      activeConflicts.push(c);
+      if (c.severity === 'critical' || c.severity === 'high') {
+        criticalConflictCount++;
+      }
+    }
+  }
+
+  let resolvedClaimsCount = 0;
+  let hasHazard = false;
+  for (let i = 0; i < claims.length; i++) {
+    const c = claims[i];
+    if (c.status === 'resolved' || c.status === 'supported') {
+      resolvedClaimsCount++;
+      supportedFacts.push(`${c.subject}: "${c.value}" (verified via ${c.source})`);
+      const valLower = c.value.toLowerCase();
+      if (valLower.includes('crack') || valLower.includes('closed') || valLower.includes('down')) {
+        hasHazard = true;
+      }
+    }
+  }
+
+  let highReliabilityCount = 0;
+  for (let i = 0; i < reports.length; i++) {
+    const t = reports[i].sourceType;
+    if (t === 'official' || t === 'sensor' || t === 'field_operator') {
+      highReliabilityCount++;
+    }
+  }
 
   let overallStatus: Assessment['overallStatus'] = 'investigating';
   let headline = 'Incident under investigation; verifying conflicting inputs.';
   let recommendedNextStep = 'Execute top-ranked verification action in priority queue.';
 
-  // Deterministic Confidence Formula:
-  // Base 50 + (resolvedClaims / total * 30) - (activeConflicts * 15) + (sensor/official corroboration bonus)
   let baseScore = 50;
   if (claims.length > 0) {
-    const resolvedRatio = resolvedClaims.length / claims.length;
-    baseScore += Math.round(resolvedRatio * 35);
+    baseScore += Math.round((resolvedClaimsCount / claims.length) * 35);
   }
-  baseScore -= activeConflicts.length * 12;
-
-  // Add source reliability bonus
-  const highReliabilityCount = reports.filter(r => r.sourceType === 'official' || r.sourceType === 'sensor' || r.sourceType === 'field_operator').length;
+  baseScore -= activeConflictCount * 12;
   baseScore += Math.min(15, highReliabilityCount * 3);
 
   const confidenceScore = Math.max(10, Math.min(98, baseScore));
 
-  if (activeConflicts.length === 0 && resolvedClaims.length > 0) {
-    const hasHazard = resolvedClaims.some(c => c.value.toLowerCase().includes('crack') || c.value.toLowerCase().includes('closed') || c.value.toLowerCase().includes('down'));
+  if (activeConflictCount === 0 && resolvedClaimsCount > 0) {
     if (hasHazard) {
       overallStatus = 'hazard_confirmed';
       headline = 'Hazard confirmed by verified multi-source evidence. Emergency controls applied.';
@@ -267,15 +309,11 @@ export function calculateAssessment(
       headline = 'Investigation concluded. Contradictory reports reconciled; status confirmed normal.';
       recommendedNextStep = 'Archive incident audit record.';
     }
-  } else if (criticalConflicts.length > 0) {
+  } else if (criticalConflictCount > 0) {
     overallStatus = 'investigating';
-    headline = `CRITICAL DISCREPANCY: ${criticalConflicts.length} high-severity contradiction(s) pending direct verification.`;
+    headline = `CRITICAL DISCREPANCY: ${criticalConflictCount} high-severity contradiction(s) pending direct verification.`;
     recommendedNextStep = 'Trigger prioritized sensor telemetry or drone dispatch immediately.';
   }
-
-  const supportedFacts = resolvedClaims.map(c => 
-    `${c.subject}: "${c.value}" (verified via ${c.source})`
-  );
 
   const conflictSummaries = activeConflicts.map(c => 
     `[${c.severity.toUpperCase()}] ${c.description}`

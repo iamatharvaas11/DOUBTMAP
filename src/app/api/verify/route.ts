@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { RawReport } from '@/lib/types';
 import { extractClaimsWithAI } from '@/lib/gemini';
-import { detectConflicts, rankVerificationActions, calculateAssessment } from '@/lib/verification-engine';
-import { sanitizeAndCheckInput, formatSafeError } from '@/lib/security';
+import { detectConflicts, calculateAssessment } from '@/lib/verification-engine';
+import { sanitizeAndCheckInput, formatSafeError, ClaimSchema, RawReportSchema } from '@/lib/security';
 
 const VerifyRequestSchema = z.object({
   report: z.object({
@@ -14,8 +14,8 @@ const VerifyRequestSchema = z.object({
     content: z.string().min(1).max(3000),
     reliabilityScore: z.number().min(0).max(1).optional(),
   }),
-  existingClaims: z.array(z.any()).default([]),
-  existingReports: z.array(z.any()).default([]),
+  existingClaims: z.array(ClaimSchema).default([]),
+  existingReports: z.array(RawReportSchema).default([]),
 });
 
 export async function POST(req: NextRequest) {

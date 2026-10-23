@@ -1,19 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { Incident, RawReport } from '@/lib/types';
 import { applyVerificationEvidence } from '@/lib/verification-engine';
-import { formatSafeError } from '@/lib/security';
+import { formatSafeError, IncidentSchema, RawReportSchema } from '@/lib/security';
 
 const ExecuteActionSchema = z.object({
-  incident: z.any(),
-  simulatedReport: z.object({
-    id: z.string(),
-    source: z.string(),
-    sourceType: z.enum(['official', 'sensor', 'crowdsource', 'field_operator', 'internal_log']),
-    timestamp: z.string(),
-    content: z.string(),
-    reliabilityScore: z.number(),
-  }),
+  incident: IncidentSchema,
+  simulatedReport: RawReportSchema,
   expectedResolution: z.string().optional(),
 });
 
